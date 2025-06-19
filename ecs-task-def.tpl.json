@@ -1,0 +1,29 @@
+{
+  "family": "$ECS_TASK_FAMILY",
+  "networkMode": "$ECS_NETWORK_MODE",
+  "requiresCompatibilities": ["$ECS_REQUIRES_COMPATIBILITIES"],
+  "cpu": "$ECS_CPU",
+  "memory": "$ECS_MEMORY",
+  "executionRoleArn": "$ECS_EXECUTION_ROLE_ARN",
+  "containerDefinitions": [
+    {
+      "name": "$ECS_CONTAINER_NAME",
+      "image": "placeholder",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": $ECS_CONTAINER_PORT,
+          "protocol": "$ECS_PROTOCOL"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "$ECS_LOG_GROUP",
+          "awslogs-region": "$AWS_REGION",
+          "awslogs-stream-prefix": "$ECS_LOG_STREAM_PREFIX"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+name: Build and Deploy to ECS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECS_NETWORK_MODE: ${{ vars.ECS_NETWORK_MODE }}
+  ECS_REQUIRES_COMPATIBILITIES: ${{ vars.ECS_REQUIRES_COMPATIBILITIES }}
+  ECS_CPU: ${{ vars.ECS_CPU }}
+  ECS_MEMORY: ${{ vars.ECS_MEMORY }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
+  ECS_CONTAINER_NAME: ${{ vars.ECS_CONTAINER_NAME }}
+  ECS_CONTAINER_PORT: ${{ vars.ECS_CONTAINER_PORT }}
+  ECS_PROTOCOL: ${{ vars.ECS_PROTOCOL }}
+  ECS_LOG_GROUP: ${{ vars.ECS_LOG_GROUP }}
+  ECS_LOG_STREAM_PREFIX: ${{ vars.ECS_LOG_STREAM_PREFIX }}
+
+  # Role for ECS operations
+  ECS_EXECUTION_ROLE_ARN: ${{ secrets.ECS_EXECUTION_ROLE_ARN }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write  # Required for OIDC
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }} # github role - to allow access to aws
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Extract commit SHA
+        id: vars
+        run: echo "sha_short=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Build, tag, and push Docker image
+        run: |
+          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.run_id }}"
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+
+          docker build \
+            --no-cache \
+            -t $IMAGE_URI \
+            -t ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest \
+            .
+
+          docker push $IMAGE_URI
+          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+
+      - name: Render ECS task definition from template
+        # remove the cat soon
+        run: |
+          envsubst < ecs-task-def.tpl.json > ecs-task-def.json
+          cat ecs-task-def.json
+
+      - name: Render new ECS task definition with image
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ecs-task-def.json
+          container-name: ${{ env.ECS_CONTAINER_NAME }}
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.run_id }}
+
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          cluster: ${{ vars.ECS_CLUSTER_NAME }}
+          service: ${{ vars.ECS_SERVICE_NAME }}
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
